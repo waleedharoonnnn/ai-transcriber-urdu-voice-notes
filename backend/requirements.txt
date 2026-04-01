@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-dotenv
+groq
+google-generativeai
+sentence-transformers
+supabase
+pinecone
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+apscheduler

@@ -1,0 +1,19 @@
+# Python
+.venv/
+backend/.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+
+# Node / React Native
+**/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+
+# OS
+.DS_Store
+Thumbs.db
