@@ -28,8 +28,10 @@ Open Swagger: `http://127.0.0.1:8000/docs`
 
 ### 2) Frontend
 
-1. Create your environment file:
-   - Copy `frontend/.env.example` → `frontend/.env`
+1. (Optional) Configure API base URL:
+   - By default the frontend uses `http://127.0.0.1:8000`.
+   - If you want to override it, create `frontend/.env` with:
+     - `VITE_API_BASE_URL=http://127.0.0.1:8000`
 2. Install + run:
    - `cd frontend`
    - `npm install`
@@ -43,10 +45,9 @@ Open the app (Vite prints the URL, usually `http://127.0.0.1:5173`).
   - Dimension: **384**
   - Metric: **cosine**
 - Set `PINECONE_API_KEY` + `PINECONE_INDEX` in `backend/.env`
-- Backfill existing notes into Pinecone:
-  - `cd backend`
-  - `source .venv/Scripts/activate`
-  - `python scripts/reindex_pinecone.py --user-id YOUR_USER_ID`
+- Indexing behavior:
+  - New notes are indexed automatically.
+  - Existing notes become indexed after you edit/save them (or re-create them).
 
 ## More detailed setup
 

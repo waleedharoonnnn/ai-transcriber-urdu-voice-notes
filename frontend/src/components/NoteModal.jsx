@@ -115,6 +115,15 @@ export default function NoteModal({ open, note, onClose, onDelete, onUpdate }) {
             </div>
           ) : null}
 
+          {note?.urdu_text_roman ? (
+            <div>
+              <div className="text-xs text-zinc-500">Roman Urdu</div>
+              <div className="mt-1 text-zinc-200 whitespace-pre-wrap">
+                {note.urdu_text_roman}
+              </div>
+            </div>
+          ) : null}
+
           {note?.urdu_text ? (
             <div>
               <div className="text-xs text-zinc-500">Urdu (raw)</div>

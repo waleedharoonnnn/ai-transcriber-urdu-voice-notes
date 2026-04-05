@@ -13,9 +13,11 @@ export default function HomePage() {
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [error, setError] = useState(null);
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState(null);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatNoteSources, setChatNoteSources] = useState([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [activeNote, setActiveNote] = useState(null);
@@ -49,33 +51,6 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  async function runSearch() {
-    if (!userId) return;
-    const q = (searchQuery || "").trim();
-    if (!q) {
-      setSearchResults(null);
-      return;
-    }
-
-    setError(null);
-    setSearching(true);
-    try {
-      const res = await api.get("/notes/search", {
-        params: { user_id: userId, q, top_k: 20 },
-      });
-      setSearchResults(res.data || []);
-    } catch (err) {
-      const msg =
-        err?.response?.data?.detail ||
-        err?.response?.data?.error ||
-        err?.message ||
-        "Search failed";
-      setError(msg);
-    } finally {
-      setSearching(false);
-    }
-  }
-
   async function createNoteFromBlob(blob) {
     if (!userId) return;
 
@@ -88,6 +63,44 @@ export default function HomePage() {
     });
 
     await fetchNotes();
+  }
+
+  async function sendChat() {
+    if (!userId) return;
+    const text = (chatInput || "").trim();
+    if (!text) return;
+
+    setChatError(null);
+    setChatSending(true);
+    setChatInput("");
+    setChatNoteSources([]);
+    setChatMessages((prev) => [...prev, { role: "user", text }]);
+
+    try {
+      const res = await api.post(
+        "/notes/answer",
+        { question: text, top_k: 8 },
+        { params: { user_id: userId } },
+      );
+
+      const answer = res?.data?.answer || "";
+      const noteSources = res?.data?.note_sources || [];
+
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: answer || "(No answer returned)" },
+      ]);
+      setChatNoteSources(Array.isArray(noteSources) ? noteSources : []);
+    } catch (err) {
+      const msg =
+        err?.response?.data?.detail ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "Chat failed";
+      setChatError(msg);
+    } finally {
+      setChatSending(false);
+    }
   }
 
   async function openNote(note) {
@@ -164,13 +177,15 @@ export default function HomePage() {
           </button>
         </header>
 
-        <main className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <section className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
-            <div className="text-white font-semibold">Record</div>
-            <div className="text-sm text-zinc-400 mt-1">
-              Tap to start, tap to stop.
+        <main className="mt-6 space-y-6">
+          <section className="bg-zinc-950 border border-zinc-800 rounded-xl p-6">
+            <div className="text-center">
+              <div className="text-white font-semibold">Record</div>
+              <div className="text-sm text-zinc-400 mt-1">
+                Tap to start, tap to stop.
+              </div>
             </div>
-            <div className="mt-4">
+            <div className="mt-5 flex justify-center">
               <Recorder onCreate={createNoteFromBlob} />
             </div>
           </section>
@@ -178,46 +193,12 @@ export default function HomePage() {
           <section className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div className="text-white font-semibold">Your notes</div>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={fetchNotes}
-                  className="text-sm text-zinc-300 hover:text-white"
-                >
-                  Refresh
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-3 flex items-center gap-2">
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") runSearch();
-                }}
-                placeholder="Semantic search your notes…"
-                className="flex-1 rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-700"
-              />
-              {searchResults ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setSearchResults(null);
-                  }}
-                  className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 text-zinc-200 hover:border-zinc-600"
-                >
-                  Clear
-                </button>
-              ) : null}
               <button
                 type="button"
-                onClick={runSearch}
-                disabled={searching}
-                className="rounded-lg bg-white text-black px-3 py-2 disabled:opacity-50"
+                onClick={fetchNotes}
+                className="text-sm text-zinc-300 hover:text-white"
               >
-                {searching ? "Searching…" : "Search"}
+                Refresh
               </button>
             </div>
 
@@ -230,14 +211,6 @@ export default function HomePage() {
             <div className="mt-4 space-y-3">
               {loadingNotes ? (
                 <div className="text-sm text-zinc-400">Loading…</div>
-              ) : searchResults !== null ? (
-                searchResults.length ? (
-                  searchResults.map((n) => (
-                    <NoteCard key={n.id} note={n} onOpen={openNote} />
-                  ))
-                ) : (
-                  <div className="text-sm text-zinc-500">No matches.</div>
-                )
               ) : notes.length ? (
                 notes.map((n) => (
                   <NoteCard key={n.id} note={n} onOpen={openNote} />
@@ -247,6 +220,81 @@ export default function HomePage() {
                   No notes yet. Record one.
                 </div>
               )}
+            </div>
+          </section>
+
+          <section className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+            <div className="text-white font-semibold">Ask your notes</div>
+            <div className="text-sm text-zinc-400 mt-1">
+              Ask like a chatbot: “Did I record anything about …?”
+            </div>
+
+            {chatError ? (
+              <div className="mt-3 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-lg px-3 py-2">
+                {String(chatError)}
+              </div>
+            ) : null}
+
+            {chatMessages.length ? (
+              <div className="mt-4 space-y-3">
+                {chatMessages.map((m, idx) => (
+                  <div
+                    key={idx}
+                    className={
+                      m.role === "user"
+                        ? "ml-auto max-w-[85%] rounded-2xl bg-white text-black px-4 py-2"
+                        : "mr-auto max-w-[85%] rounded-2xl bg-zinc-900 border border-zinc-800 px-4 py-2 text-zinc-200"
+                    }
+                  >
+                    <div className="text-sm whitespace-pre-wrap">{m.text}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-4 text-sm text-zinc-500">
+                No questions yet.
+              </div>
+            )}
+
+            {chatNoteSources?.length ? (
+              <div className="mt-4">
+                <div className="text-xs text-zinc-500">Matched notes</div>
+                <div className="mt-2 space-y-2">
+                  {chatNoteSources.slice(0, 5).map((n) => (
+                    <button
+                      key={n.id}
+                      type="button"
+                      onClick={() => openNote(n)}
+                      className="w-full text-left rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 text-zinc-200 hover:border-zinc-600"
+                    >
+                      <div className="font-medium">{n.title || "Untitled"}</div>
+                      <div className="text-xs text-zinc-400 line-clamp-2 mt-1">
+                        {n.english_text || n.urdu_text_corrected || ""}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex items-center gap-2">
+              <input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendChat();
+                }}
+                placeholder='Ask: "Did I record anything about gym?"'
+                className="flex-1 rounded-full bg-zinc-900 border border-zinc-800 px-4 py-3 text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+              />
+              <button
+                type="button"
+                onClick={sendChat}
+                disabled={chatSending}
+                className="rounded-full bg-white text-black px-5 py-3 disabled:opacity-50"
+              >
+                {chatSending ? "…" : "Send"}
+              </button>
             </div>
           </section>
         </main>

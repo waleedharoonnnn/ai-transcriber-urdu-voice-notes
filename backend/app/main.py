@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 _backend_dir = Path(__file__).resolve().parents[1]
 load_dotenv(_backend_dir / ".env")
 
-from app.routers import auth, notes  # noqa: E402
+from app.routers import auth, memory, notes  # noqa: E402
 
 app = FastAPI(title="Urdu Notes API", version="1.0.0")
 
@@ -21,6 +21,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(notes.router)
+app.include_router(memory.router)
 
 
 @app.get("/")
