@@ -1,4 +1,4 @@
-# Setup Guide (Backend + Frontend + Supabase + Pinecone)
+# Setup Guide (Backend + Frontend + Neon + Pinecone)
 
 This guide is designed to be copy/paste friendly.
 
@@ -6,38 +6,53 @@ This guide is designed to be copy/paste friendly.
 
 - Python **3.10** (you already have a venv in `backend/.venv`)
 - Node.js **18+** recommended
-- A Supabase project (DB + Storage)
+- A Neon project (Postgres) — https://neon.tech
 - API keys:
   - Groq (Whisper)
   - Gemini
   - (Optional) Pinecone
 
-## 1) Supabase setup
+## 1) Neon setup
 
-### 1.1 Create the `notes` table
+### 1.1 Create a Neon project
 
-The backend expects a `notes` table with (at minimum) these columns:
+Create a project at [neon.tech](https://neon.tech) and copy its connection string
+(Dashboard → Connection Details). It looks like:
 
-- `id` (uuid, primary key, default generated)
-- `user_id` (uuid)
-- `urdu_text` (text)
-- `urdu_text_corrected` (text, nullable)
-- `urdu_text_roman` (text, nullable) ← optional (Roman Urdu transliteration)
-- `english_text` (text)
-- `title` (text, nullable)
-- `tags` (text[] or json, nullable)
-- `audio_url` (text, nullable)
-- `embedding` (vector or json, nullable)
-- `created_at` (timestamp, default now())
+`postgresql://USER:PASSWORD@HOST/DB?sslmode=require`
 
-If you’re using pgvector, set `embedding` to `vector(384)`.
+Put this in `backend/.env` as `DATABASE_URL`.
 
-### 1.2 Create the Storage bucket
+### 1.2 Create the schema
 
-The API uploads audio to a Supabase Storage bucket.
+The backend expects `users`, `user_preferences`, `notes`, and `memories` tables.
+Run the provided schema script against your Neon database:
 
-- Default bucket name: `audio`
-- You can override it via `SUPABASE_AUDIO_BUCKET` in `backend/.env`
+- `psql "$DATABASE_URL" -f backend/app/db/schema.sql`
+
+This creates:
+
+- `notes`: `id`, `user_id`, `urdu_text`, `urdu_text_corrected`, `urdu_text_roman`,
+  `english_text`, `title`, `tags` (`text[]`), `audio_url`, `embedding`
+  (`double precision[]`), `created_at`
+- `memories`: `id`, `user_id`, `text`, `kind` (`short`/`long`), `embedding`,
+  `expires_at`, `created_at`
+- `users`: `id`, `email`, `password_hash`, `created_at`
+- `user_preferences`: `user_id`, `summary_frequency`
+
+### 1.3 Audio storage
+
+Audio files are no longer stored in the database/cloud — they're saved to local
+disk on the backend server, under `backend/storage/audio/<user_id>/...` by
+default, and served back at `/audio/<user_id>/<file>`.
+
+- Override the folder with `AUDIO_STORAGE_DIR` in `backend/.env`
+- Override the public base URL with `AUDIO_BASE_URL` (must match how the
+  backend is reachable, e.g. your deployed URL in production)
+
+Note: on ephemeral hosts (e.g. most container platforms), local disk storage
+does not persist across redeploys/restarts. For production, consider mounting
+a persistent volume or moving to object storage later.
 
 ## 2) Backend setup (FastAPI)
 
@@ -61,19 +76,19 @@ Using Git Bash on Windows:
 
 - `cd backend`
 - `source .venv/Scripts/activate`
-- `uvicorn app.main:app --reload --host 127.0.0.1 --port 8000`
+- `uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`
 
-Docs: `http://127.0.0.1:8000/docs`
+Docs: `http://127.0.0.1:8001/docs`
 
 ## 3) Frontend setup (Vite + React)
 
 ### 3.1 Create env file
 
-- Optional. By default the frontend uses `http://127.0.0.1:8000`.
+- Optional. By default the frontend uses `http://127.0.0.1:8001`.
 
 If you want to override it, create `frontend/.env` with:
 
-`VITE_API_BASE_URL=http://127.0.0.1:8000`
+`VITE_API_BASE_URL=http://127.0.0.1:8001`
 
 ### 3.2 Install + run
 
@@ -151,7 +166,8 @@ From inside the backend venv:
 
 - If Pinecone is not configured, `/notes/search` and `/notes/answer` fall back to simple DB text matching (less accurate than embeddings).
 - Pinecone returns dimension error: your index must be **384**.
-- Storage errors: ensure the bucket exists (default `audio`) or set `SUPABASE_AUDIO_BUCKET`.
+- Audio not loading: confirm `AUDIO_BASE_URL` matches the URL the frontend/browser can actually reach the backend at, and that `backend/storage/audio/` is writable.
+- Database errors: confirm `DATABASE_URL` is correct and that you've run `backend/app/db/schema.sql` against it.
 
 ## 6) Memory (short-term + long-term)
 
@@ -160,19 +176,9 @@ This project supports a simple “memory” feature in the backend:
 - **Long-term memory**: persistent facts/notes you want the assistant to remember
 - **Short-term memory**: temporary context with an expiration time (TTL)
 
-### 6.1 Create the `memories` table
+The `memories` table is created automatically by `backend/app/db/schema.sql` (see 1.2).
 
-Create a table named `memories` with columns:
-
-- `id` (uuid, primary key)
-- `user_id` (uuid)
-- `text` (text)
-- `kind` (text, values: `short` or `long`)
-- `embedding` (vector(384) if using pgvector, or json)
-- `expires_at` (timestamp, nullable)
-- `created_at` (timestamp, default now())
-
-### 6.2 API endpoints
+### 6.1 API endpoints
 
 - Add memory: `POST /memory/add?user_id=...`
   - Body: `{ "text": "...", "kind": "short|long", "ttl_hours": 24 }`

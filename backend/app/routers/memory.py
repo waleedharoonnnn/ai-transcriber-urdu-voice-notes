@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from app.db.supabase import get_client
+from app.db.database import execute, execute_returning, fetch_all
 from app.models.schemas import MemoryAddRequest
 from app.services import embedding
 from app.services.vectorstore import VectorStoreNotConfiguredError, get_vectorstore
@@ -44,25 +44,18 @@ async def add_memory(user_id: str, payload: MemoryAddRequest) -> dict:
             raise HTTPException(status_code=400, detail="ttl_hours must be 1..720")
         expires_at = _now_utc() + timedelta(hours=int(ttl_hours))
 
-    mem_id = str(uuid.uuid4())
     vec = embedding.generate_embedding(text)
 
-    supabase = get_client()
-    row = {
-        "id": mem_id,
-        "user_id": user_id,
-        "text": text,
-        "kind": kind,
-        "embedding": vec,
-        "expires_at": expires_at.isoformat() if expires_at else None,
-    }
-
-    res = supabase.table("memories").insert(row).execute()
-    if not getattr(res, "data", None):
-        # If insert response doesn't include data, still return what we know.
-        created_at = _now_utc().isoformat()
-    else:
-        created_at = res.data[0].get("created_at") or _now_utc().isoformat()
+    rows = execute_returning(
+        """
+        insert into memories (user_id, text, kind, embedding, expires_at)
+        values (%s, %s, %s, %s, %s)
+        returning id, created_at
+        """,
+        (user_id, text, kind, vec, expires_at),
+    )
+    mem_id = str(rows[0]["id"])
+    created_at = rows[0]["created_at"].isoformat()
 
     # Best-effort Pinecone upsert.
     try:
@@ -97,28 +90,25 @@ async def list_memories(user_id: str, kind: str | None = None, limit: int = 50) 
     if kind_lc and kind_lc not in ("short", "long"):
         raise HTTPException(status_code=400, detail="kind must be 'short' or 'long'.")
 
-    supabase = get_client()
-    q = supabase.table("memories").select("id, text, kind, created_at, expires_at").eq(
-        "user_id", user_id
-    )
     if kind_lc:
-        q = q.eq("kind", kind_lc)
-
-    res = q.order("created_at", desc=True).limit(int(limit)).execute()
-    rows = res.data or []
+        rows = fetch_all(
+            "select id, text, kind, created_at, expires_at from memories "
+            "where user_id = %s and kind = %s order by created_at desc limit %s",
+            (user_id, kind_lc, limit),
+        )
+    else:
+        rows = fetch_all(
+            "select id, text, kind, created_at, expires_at from memories "
+            "where user_id = %s order by created_at desc limit %s",
+            (user_id, limit),
+        )
 
     now = _now_utc()
     out: list[dict] = []
     for r in rows:
         exp = r.get("expires_at")
-        if exp:
-            try:
-                exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
-                if exp_dt <= now:
-                    continue
-            except Exception:
-                # If parsing fails, keep it.
-                pass
+        if exp and exp <= now:
+            continue
         out.append(r)
     return out
 
@@ -166,16 +156,12 @@ async def search_memories(user_id: str, q: str, top_k: int = 10, kind: str | Non
     if not ids:
         return []
 
-    supabase = get_client()
-    mem_res = (
-        supabase.table("memories")
-        .select("id, text, kind, created_at, expires_at")
-        .eq("user_id", user_id)
-        .in_("id", ids)
-        .execute()
+    rows = fetch_all(
+        "select id, text, kind, created_at, expires_at from memories "
+        "where user_id = %s and id = any(%s::uuid[])",
+        (user_id, ids),
     )
-
-    by_id = {str(m["id"]): m for m in (mem_res.data or [])}
+    by_id = {str(m["id"]): m for m in rows}
     now = _now_utc()
 
     ordered: list[dict] = []
@@ -186,13 +172,8 @@ async def search_memories(user_id: str, q: str, top_k: int = 10, kind: str | Non
         if kind_lc and (m.get("kind") or "").lower() != kind_lc:
             continue
         exp = m.get("expires_at")
-        if exp:
-            try:
-                exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
-                if exp_dt <= now:
-                    continue
-            except Exception:
-                pass
+        if exp and exp <= now:
+            continue
         ordered.append({**m, "similarity": scores.get(str(mem_id), 0.0)})
 
     return ordered
@@ -201,14 +182,7 @@ async def search_memories(user_id: str, q: str, top_k: int = 10, kind: str | Non
 @router.delete("/{memory_id}")
 async def delete_memory(memory_id: str, user_id: str) -> dict:
     user_id = _normalize_user_id(user_id)
-    supabase = get_client()
-    (
-        supabase.table("memories")
-        .delete()
-        .eq("id", memory_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
+    execute("delete from memories where id = %s and user_id = %s", (memory_id, user_id))
 
     try:
         vs = get_vectorstore()

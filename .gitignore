@@ -8,6 +8,9 @@ backend/.venv/
 .ruff_cache/
 .env
 
+# Locally stored uploaded audio
+backend/storage/
+
 # Node / React Native
 **/node_modules/
 mobile/.expo/

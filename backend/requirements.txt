@@ -4,9 +4,10 @@ python-dotenv
 groq
 google-generativeai
 sentence-transformers
-supabase
+psycopg2-binary
 pinecone
 python-multipart
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt<4.1
 apscheduler

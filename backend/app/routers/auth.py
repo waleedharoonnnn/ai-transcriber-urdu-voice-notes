@@ -1,84 +1,54 @@
 from fastapi import APIRouter, HTTPException
 
-from app.db.supabase import get_client
+from app.core.security import create_access_token, hash_password, verify_password
+from app.db.database import execute, execute_returning, fetch_one
 from app.models.schemas import AuthRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _get_user_by_email(supabase, email: str):
-    email_lc = (email or "").lower()
-    try:
-        res = supabase.auth.admin.list_users()
-        users = res if isinstance(res, list) else getattr(res, "users", [])
-        for u in users:
-            u_email = (u.get("email") if isinstance(u, dict) else getattr(u, "email", None))
-            if (u_email or "").lower() == email_lc:
-                return u
-    except Exception:
-        return None
-    return None
-
-
 @router.post("/signup")
 async def signup(body: AuthRequest) -> dict:
-    try:
-        supabase = get_client()
-        user = None
+    email = (body.email or "").strip().lower()
+    if not email or not body.password:
+        raise HTTPException(status_code=400, detail="Email and password are required.")
 
-        if hasattr(supabase.auth, "admin") and hasattr(supabase.auth.admin, "create_user"):
-            try:
-                created = supabase.auth.admin.create_user({
-                    "email": body.email,
-                    "password": body.password,
-                    "email_confirm": True,
-                })
-                user = created if isinstance(created, dict) else getattr(created, "user", None)
-            except Exception:
-                user = _get_user_by_email(supabase, body.email)
-        else:
-            result = supabase.auth.sign_up({
-                "email": body.email,
-                "password": body.password,
-            })
-            user = getattr(result, "user", None)
+    existing = fetch_one("select id from users where email = %s", (email,))
+    if existing:
+        raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
-        if user is None:
-            raise HTTPException(status_code=400, detail="Signup failed")
+    password_hash = hash_password(body.password)
+    rows = execute_returning(
+        "insert into users (email, password_hash) values (%s, %s) returning id, email",
+        (email, password_hash),
+    )
+    user = rows[0]
 
-        user_id = str(user.get("id") if isinstance(user, dict) else getattr(user, "id"))
-        email = user.get("email") if isinstance(user, dict) else getattr(user, "email", body.email)
+    execute(
+        "insert into user_preferences (user_id, summary_frequency) values (%s, %s) "
+        "on conflict (user_id) do nothing",
+        (user["id"], 7),
+    )
 
-        supabase.table("user_preferences").upsert(
-            {
-                "user_id": user_id,
-                "summary_frequency": 7,
-            },
-            on_conflict="user_id",
-        ).execute()
-
-        return {
-            "user_id": user_id,
-            "email": email,
-            "message": "Signup successful.",
-        }
-    except Exception as e:
-        detail = str(e) or "Signup failed"
-        raise HTTPException(status_code=400, detail=detail)
+    return {
+        "user_id": str(user["id"]),
+        "email": user["email"],
+        "message": "Signup successful.",
+    }
 
 
 @router.post("/login")
 async def login(body: AuthRequest) -> dict:
-    try:
-        supabase = get_client()
-        result = supabase.auth.sign_in_with_password({
-            "email": body.email,
-            "password": body.password,
-        })
-        return {
-            "access_token": result.session.access_token,
-            "user_id": str(result.user.id),
-            "email": result.user.email,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=str(e) or "Invalid credentials")
+    email = (body.email or "").strip().lower()
+    user = fetch_one(
+        "select id, email, password_hash from users where email = %s", (email,)
+    )
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_access_token(str(user["id"]), user["email"])
+    return {
+        "access_token": token,
+        "user_id": str(user["id"]),
+        "email": user["email"],
+    }

@@ -12,6 +12,10 @@ _.egg-info/
 .venv/
 venv/
 
+# Locally stored uploaded audio
+
+storage/
+
 # Local env/secrets
 
 .env
